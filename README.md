@@ -39,8 +39,8 @@
 
 ## Благодарности
 Этот проект базируется на исследованиях сообщества:
-- [yandex-music-api (MarshalX)](https://github.com/MarshalX/yandex-music-api/) — за логику авторизации.
-- [YandexStation (AlexxIT)](https://github.com/AlexxIT/YandexStation) — за реализацию протокола Glagol.
+- [yandex-music-api (MarshalX)](https://github.com/MarshalX/yandex-music-api/)
+- [YandexStation (AlexxIT)](https://github.com/AlexxIT/YandexStation)
 
 ---
 *Разработано в рамках проекта Monitoring App.*
