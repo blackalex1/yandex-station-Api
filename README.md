@@ -43,4 +43,4 @@
 - [YandexStation (AlexxIT)](https://github.com/AlexxIT/YandexStation)
 
 ---
-*Разработано в рамках проекта Monitoring App.*
+*Разработано в рамках проекта [Monitoring App](https://github.com/blackalex1/Monithome).*
