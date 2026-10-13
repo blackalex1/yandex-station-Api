@@ -5,26 +5,56 @@ import time
 import uuid
 import websockets
 import os
+import sys
 
-TOKENS_FILE = "glagol_tokens.json"
+# Поддержка UTF-8 в консоли Windows
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+TOKENS_FILE = os.path.join(BASE_DIR, "glagol_tokens.json")
 
 async def send_glagol_command(device_id, payload_data):
+    if not os.path.exists(TOKENS_FILE):
+        print(f"[-] Файл {TOKENS_FILE} не найден. Сначала запусти yandex_setup_full.py")
+        return False
+
     with open(TOKENS_FILE, "r", encoding="utf-8") as f:
         tokens = json.load(f)
-    
-    device = tokens.get(device_id)
-    if not device or not device.get("ip"):
-        print("Ошибка: Колонка не найдена или не имеет IP.")
-        return
 
-    print(f"Отправка команды на '{device['name']}' ({device['ip']})...")
-    
+    device = tokens.get(device_id)
+    if not device:
+        print("[-] Ошибка: Колонка не найдена в базе.")
+        return False
+
+    ip = device.get("ip")
+    if not ip:
+        print(f"[-] Ошибка: Для колонки '{device['name']}' неизвестен IP.")
+        ip_input = input("Введи IP колонки вручную (или Enter для отмены): ").strip()
+        if not ip_input:
+            return False
+        ip = ip_input
+        device["ip"] = ip
+        tokens[device_id]["ip"] = ip
+        with open(TOKENS_FILE, "w", encoding="utf-8") as f:
+            json.dump(tokens, f, ensure_ascii=False, indent=2)
+
+    print(f"Отправка команды на '{device['name']}' ({ip})...")
+
     ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     ssl_context.check_hostname = False
     ssl_context.verify_mode = ssl.CERT_NONE
 
     try:
-        async with websockets.connect(f"wss://{device['ip']}:1961", ssl=ssl_context) as ws:
+        ws = await asyncio.wait_for(
+            websockets.connect(f"wss://{ip}:1961", ssl=ssl_context),
+            timeout=5
+        )
+        async with ws:
             full_payload = {
                 "conversationToken": device["glagol_token"],
                 "id": str(uuid.uuid4()),
@@ -32,35 +62,56 @@ async def send_glagol_command(device_id, payload_data):
                 "payload": payload_data
             }
             await ws.send(json.dumps(full_payload))
-            print("  [+] Выполнено!")
+            print("  [+] Команда успешно отправлена!")
+            await asyncio.sleep(0.5)
+            return True
     except Exception as e:
-        print(f"  [-] Ошибка: {e}")
+        print(f"  [-] Ошибка отправки: {e}")
+        return False
 
 async def main():
     if not os.path.exists(TOKENS_FILE):
-        print("Сначала запусти yandex_setup_full.py")
+        print(f"[-] Файл {TOKENS_FILE} не найден. Сначала запусти yandex_setup_full.py")
         return
 
     with open(TOKENS_FILE, "r", encoding="utf-8") as f:
         tokens = json.load(f)
-    
-    ids = list(tokens.keys())
+
+    # Отображаем только аппаратные колонки
+    speaker_keys = [
+        k for k, v in tokens.items()
+        if not v.get("platform", "").startswith(("iot_app", "weather_"))
+    ]
+    if not speaker_keys:
+        speaker_keys = list(tokens.keys())
+
     print("\nВЫБЕРИ КОЛОНКУ:")
-    for i, d_id in enumerate(ids):
-        print(f"{i+1}. {tokens[d_id]['name']}")
-    
+    for i, d_id in enumerate(speaker_keys):
+        dev = tokens[d_id]
+        ip_str = f" [IP: {dev['ip']}]" if dev.get('ip') else " [IP НЕ НАЙДЕН]"
+        print(f"{i+1}. {dev['name']} ({dev.get('platform')}){ip_str}")
+
     try:
-        idx = int(input("\nНомер колонки: ")) - 1
-        target_id = ids[idx]
-        
+        idx_input = input("\nНомер колонки (Enter - выход): ").strip()
+        if not idx_input:
+            return
+        idx = int(idx_input) - 1
+        if not (0 <= idx < len(speaker_keys)):
+            print("Неверный номер.")
+            return
+
+        target_id = speaker_keys[idx]
+
         print("\nДЕЙСТВИЕ:")
         print("1. Следующий трек (next)")
         print("2. Предыдущий трек (prev)")
         print("3. Пауза (stop)")
-        print("4. Громкость (setVolume)")
-        
-        choice = input("Выбор: ")
-        
+        print("4. Воспроизведение (play)")
+        print("5. Громкость (setVolume)")
+        print("6. Озвучить текст / команда Алисе (sendText)")
+
+        choice = input("\nВыбор (1-6): ").strip()
+
         if choice == "1":
             await send_glagol_command(target_id, {"command": "next"})
         elif choice == "2":
@@ -68,11 +119,21 @@ async def main():
         elif choice == "3":
             await send_glagol_command(target_id, {"command": "stop"})
         elif choice == "4":
-            vol = float(input("Введи громкость от 0 до 10: ")) / 10.0
-            if 0.0 <= vol <= 1.0:
-                await send_glagol_command(target_id, {"command": "setVolume", "volume": vol})
-            else:
-                print("Ошибка: Громкость должна быть от 0 до 10.")
+            await send_glagol_command(target_id, {"command": "play"})
+        elif choice == "5":
+            vol_str = input("Введи громкость от 0 до 10: ").strip()
+            try:
+                vol_num = float(vol_str)
+                if 0.0 <= vol_num <= 10.0:
+                    await send_glagol_command(target_id, {"command": "setVolume", "volume": vol_num / 10.0})
+                else:
+                    print("Ошибка: Громкость должна быть от 0 до 10.")
+            except ValueError:
+                print("Некорректное число.")
+        elif choice == "6":
+            text = input("Введите текст или команду для Алисы: ").strip()
+            if text:
+                await send_glagol_command(target_id, {"command": "sendText", "text": text})
         else:
             print("Неверный выбор.")
     except Exception as e:

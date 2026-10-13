@@ -1,4 +1,6 @@
 .env
 glagol_tokens.json
+yandex_qr.html
+yandex_qr.svg
 __pycache__/
 *.pyc
